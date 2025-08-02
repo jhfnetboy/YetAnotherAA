@@ -17,7 +17,7 @@
   },
   "include": [
     "src/**/*"
-, "tests/integration.spec.ts", "tests/setup.ts"  ],
+  ],
   "exclude": [
     "node_modules",
     "dist",

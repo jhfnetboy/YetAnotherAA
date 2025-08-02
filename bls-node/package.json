@@ -7,7 +7,7 @@
     "build": "tsc",
     "start": "node dist/signature.js",
     "start:dev": "ts-node src/signature.ts",
-    "start:example": "ts-node examples/demo.ts",
+    "start:demo": "ts-node examples/demo.ts",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
