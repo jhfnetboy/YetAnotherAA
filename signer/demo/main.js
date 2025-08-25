@@ -12,18 +12,24 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// Load configuration from config.json
+const configData = JSON.parse(readFileSync(join(__dirname, 'config.json'), 'utf8'));
+
 // Configuration
 const CONFIG = {
-    rpc: "https://sepolia.infura.io/v3/YOUR_INFURA_API_KEY",
-    privateKey: "YOUR_PRIVATE_KEY_HERE",
-    entryPoint: "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789",
-    factory: "0x559DD2D8Bf9180A70Da56FEFF57DA531BF3f2E1c",
-    validator: "0xAe7eA28a0aeA05cbB8631bDd7B10Cb0f387FC479",
+    rpc: configData.rpcConfig.ethRpcUrl,
+    bundlerRpc: configData.rpcConfig.bundlerRpcUrl,
+    privateKey: configData.ownerAccount.privateKey, // Owner private key for funding and deployment
+    aaPrivateKey: configData.aaAccount.privateKey, // AA account private key for signatures
+    aaAddress: configData.aaAccount.address, // AA account address
+    entryPoint: configData.contractInfo.entryPoint.address,
+    factory: configData.contractInfo.accountFactory.address,
+    validator: configData.contractInfo.validator.address,
     receiver: "0x962753056921000790fb7Fe7C2dCA3006bA605f3",
     selectedNodes: [
-        "0xf26f8bdca182790bad5481c1f0eac3e7ffb135ab33037dd02b8d98a1066c6e5d",
-        "0xc0e74ed91b71668dd2619e1bacaccfcc495bdbbd0a1b2a64295550c701762272",
-        "0xa3cf2ced5807ceca64db9f9ca94cecdee7ffed22803f26b7ee26a438624dd15b"
+        configData.keyPairs[0].contractNodeId,
+        configData.keyPairs[1].contractNodeId,
+        configData.keyPairs[2].contractNodeId
     ]
 };
 
@@ -162,7 +168,7 @@ class ERC4337Transfer {
         console.log("🏭 Creating or getting account...");
         
         const salt = 12345;
-        const owner = this.wallet.address;
+        const owner = CONFIG.aaAddress; // Use AA account address as owner
         
         const accountAddress = await this.factory["getAddress(address,address,bool,uint256)"](
             owner,
@@ -224,19 +230,44 @@ class ERC4337Transfer {
             "0x"
         ]);
         
+        // Create initial UserOp for gas estimation
+        const baseUserOp = {
+            sender: accountAddress,
+            nonce: "0x" + nonce.toString(16),
+            initCode: "0x",
+            callData: callData,
+            callGasLimit: "0x0",
+            verificationGasLimit: "0x0",
+            preVerificationGas: "0x0",
+            maxFeePerGas: "0x" + ethers.parseUnits("30", "gwei").toString(16),
+            maxPriorityFeePerGas: "0x" + ethers.parseUnits("10", "gwei").toString(16),
+            paymasterAndData: "0x",
+            signature: "0x"
+        };
+        
+        // Estimate gas using Pimlico
+        console.log("Estimating gas costs...");
+        const gasEstimates = await this.estimateUserOpGas(baseUserOp);
+        
         const userOp = {
             sender: accountAddress,
             nonce: nonce,
             initCode: "0x",
             callData: callData,
-            callGasLimit: 150000n,
-            verificationGasLimit: 1000000n,
-            preVerificationGas: 60000n,
+            callGasLimit: BigInt(gasEstimates.callGasLimit),
+            verificationGasLimit: BigInt(gasEstimates.verificationGasLimit),
+            preVerificationGas: BigInt(gasEstimates.preVerificationGas),
             maxFeePerGas: ethers.parseUnits("30", "gwei"),
             maxPriorityFeePerGas: ethers.parseUnits("10", "gwei"),
             paymasterAndData: "0x",
             signature: "0x"
         };
+        
+        console.log("Gas estimates:", {
+            callGasLimit: gasEstimates.callGasLimit,
+            verificationGasLimit: gasEstimates.verificationGasLimit,
+            preVerificationGas: gasEstimates.preVerificationGas
+        });
         
         // Get userOpHash
         const userOpArray = [
@@ -280,36 +311,20 @@ class ERC4337Transfer {
         
         userOp.signature = packedSignature;
         
-        // Execute transfer
+        // Execute transfer via Pimlico bundler
         const receiverBalanceBefore = await this.provider.getBalance(CONFIG.receiver);
         console.log("Receiver balance before:", ethers.formatEther(receiverBalanceBefore), "ETH");
         
-        const finalUserOpArray = [
-            userOp.sender,
-            userOp.nonce,
-            userOp.initCode,
-            userOp.callData,
-            userOp.callGasLimit,
-            userOp.verificationGasLimit,
-            userOp.preVerificationGas,
-            userOp.maxFeePerGas,
-            userOp.maxPriorityFeePerGas,
-            userOp.paymasterAndData,
-            userOp.signature
-        ];
+        console.log("Submitting UserOp to Pimlico bundler...");
+        const bundlerUserOpHash = await this.submitUserOpToBundler(userOp);
+        console.log("UserOp submitted, hash:", bundlerUserOpHash);
         
-        const tx = await this.entryPoint.handleOps(
-            [finalUserOpArray],
-            this.wallet.address,
-            {
-                gasLimit: 2000000,
-                maxFeePerGas: ethers.parseUnits("50", "gwei"),
-                maxPriorityFeePerGas: ethers.parseUnits("10", "gwei")
-            }
-        );
+        // Wait for transaction to be mined
+        const txHash = await this.waitForUserOpTransaction(bundlerUserOpHash);
+        console.log("Transaction hash:", txHash);
         
-        console.log("Transaction hash:", tx.hash);
-        const receipt = await tx.wait();
+        // Get transaction receipt
+        const receipt = await this.provider.getTransactionReceipt(txHash);
         console.log("Gas used:", receipt.gasUsed.toString());
         
         // Check results
@@ -320,6 +335,99 @@ class ERC4337Transfer {
         console.log("Actual transferred amount:", ethers.formatEther(transferred), "ETH");
         
         return transferred === ethers.parseEther("0.002");
+    }
+
+    async estimateUserOpGas(userOp) {
+        const bundlerProvider = new ethers.JsonRpcProvider(CONFIG.bundlerRpc);
+        
+        try {
+            const gasEstimates = await bundlerProvider.send("eth_estimateUserOperationGas", [
+                userOp,
+                CONFIG.entryPoint
+            ]);
+            
+            return {
+                callGasLimit: gasEstimates.callGasLimit,
+                verificationGasLimit: gasEstimates.verificationGasLimit,  
+                preVerificationGas: gasEstimates.preVerificationGas
+            };
+        } catch (error) {
+            console.warn("Gas estimation failed, using default values:", error.message);
+            return {
+                callGasLimit: "0x249f0", // 150000
+                verificationGasLimit: "0xf4240", // 1000000
+                preVerificationGas: "0x11170" // 70000
+            };
+        }
+    }
+
+    async submitUserOpToBundler(userOp) {
+        const bundlerProvider = new ethers.JsonRpcProvider(CONFIG.bundlerRpc);
+        
+        // Convert userOp to bundler format
+        const userOpForBundler = {
+            sender: userOp.sender,
+            nonce: "0x" + userOp.nonce.toString(16),
+            initCode: userOp.initCode,
+            callData: userOp.callData,
+            callGasLimit: "0x" + userOp.callGasLimit.toString(16),
+            verificationGasLimit: "0x" + userOp.verificationGasLimit.toString(16),
+            preVerificationGas: "0x" + userOp.preVerificationGas.toString(16),
+            maxFeePerGas: "0x" + userOp.maxFeePerGas.toString(16),
+            maxPriorityFeePerGas: "0x" + userOp.maxPriorityFeePerGas.toString(16),
+            paymasterAndData: userOp.paymasterAndData,
+            signature: userOp.signature
+        };
+
+        try {
+            const result = await bundlerProvider.send("eth_sendUserOperation", [
+                userOpForBundler,
+                CONFIG.entryPoint
+            ]);
+            return result;
+        } catch (error) {
+            console.error("Bundler submission error:", error);
+            throw error;
+        }
+    }
+
+    async waitForUserOpTransaction(userOpHash) {
+        const bundlerProvider = new ethers.JsonRpcProvider(CONFIG.bundlerRpc);
+        const maxAttempts = 60; // Increased to 2 minutes
+        const pollInterval = 2000; // 2 seconds
+
+        console.log("Waiting for UserOp to be mined...");
+        
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            try {
+                const receipt = await bundlerProvider.send("eth_getUserOperationReceipt", [userOpHash]);
+                
+                if (receipt && (receipt.transactionHash || receipt.receipt?.transactionHash)) {
+                    console.log("✅ UserOp mined successfully!");
+                    console.log("Block number:", receipt.blockNumber || receipt.receipt?.blockNumber);
+                    const txHash = receipt.transactionHash || receipt.receipt?.transactionHash;
+                    console.log("Actual gas used:", parseInt(receipt.actualGasUsed || '0x0', 16));
+                    return txHash;
+                }
+            } catch (error) {
+                // Receipt not yet available, continue polling
+                if (attempt % 10 === 9) {
+                    console.log(`⏳ Still waiting for UserOp to be mined... (${attempt + 1}/${maxAttempts})`);
+                }
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, pollInterval));
+        }
+        
+        // Try one more time to get the receipt for debugging
+        try {
+            const receipt = await bundlerProvider.send("eth_getUserOperationReceipt", [userOpHash]);
+            console.log("Final receipt check:", receipt);
+        } catch (error) {
+            console.log("No receipt available:", error.message);
+        }
+        
+        throw new Error(`UserOp transaction timeout - not mined within ${maxAttempts * pollInterval / 1000} seconds. UserOpHash: ${userOpHash}`);
     }
 
     async run() {
@@ -336,6 +444,7 @@ class ERC4337Transfer {
                 console.log("✅ ERC-4337 account abstraction working properly");
                 console.log("✅ BLS aggregate signature verification passed");
                 console.log("✅ Dynamic gas calculation optimization active");
+                console.log("✅ Pimlico bundler integration successful");
             } else {
                 console.log("\n❌ Transfer amount mismatch");
             }
