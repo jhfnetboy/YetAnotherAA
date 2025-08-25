@@ -108,10 +108,19 @@ contract AAStarValidator {
         address indexed previousOwner,
         address indexed newOwner
     );
-    
-    // =============================================================
-    //                      MAIN VALIDATION METHOD
-    // =============================================================
+
+    function validateAggregateSignature(
+        bytes32[] calldata nodeIds,
+        bytes calldata signature,
+        bytes calldata messagePoint
+    )external view returns (bool isValid) {
+        require(nodeIds.length > 0, "No node IDs provided");
+        require(signature.length == G2_POINT_LENGTH, "Invalid signature length");
+        require(messagePoint.length == G2_POINT_LENGTH, "Invalid message length");
+        
+        return _validateBLSSignature(nodeIds, signature, messagePoint);
+    }
+
 
     /**
      * @dev Verify aggregate BLS signature using node identifiers (emits events)
@@ -120,63 +129,29 @@ contract AAStarValidator {
      * @param nodeIds Array of node identifiers participating in signature
      * @param signature Aggregated BLS signature (256 bytes, G2 point)
      * @param messagePoint G2-encoded message point (256 bytes)
-     * @param aaAddress AA account owner address
-     * @param aaSignature ECDSA signature (65 bytes) on the same message
      * @return isValid Whether signature verification is successful
      */
     function verifyAggregateSignature(
         bytes32[] calldata nodeIds,
         bytes calldata signature,
-        bytes calldata messagePoint,
-        address aaAddress,
-        bytes calldata aaSignature
+        bytes calldata messagePoint
     ) external returns (bool isValid) {
         require(nodeIds.length > 0, "No node IDs provided");
         require(signature.length == G2_POINT_LENGTH, "Invalid signature length");
         require(messagePoint.length == G2_POINT_LENGTH, "Invalid message length");
-        require(aaAddress != address(0), "Invalid AA address");
-        require(aaSignature.length > 0, "Invalid AA signature");
         
         uint256 gasStart = gasleft();
         
         // Perform validation and get result
-        isValid = _performFullValidation(nodeIds, signature, messagePoint, aaAddress, aaSignature);
+        isValid =  _validateBLSSignature(nodeIds, signature, messagePoint);
         
         uint256 gasUsed = gasStart - gasleft();
         emit SignatureValidated(
-            keccak256(abi.encode(nodeIds, signature, messagePoint, aaAddress, aaSignature)),
+            keccak256(abi.encode(nodeIds, signature, messagePoint)),
             nodeIds.length,
             isValid,
             gasUsed
         );
-    }
-    
-    /**
-     * @dev View method for verifying aggregate BLS signature using node identifiers (does not emit events)
-     * Note: Both BLS nodes and AA account owner sign the same original message
-     * 
-     * @param nodeIds Array of node identifiers participating in signature
-     * @param signature Aggregated BLS signature
-     * @param messagePoint G2-encoded message point
-     * @param aaAddress AA account owner address
-     * @param aaSignature ECDSA signature (65 bytes) on the same message
-     * @return isValid Whether signature verification is successful
-     */
-    function validateAggregateSignature(
-        bytes32[] calldata nodeIds,
-        bytes calldata signature,
-        bytes calldata messagePoint,
-        address aaAddress,
-        bytes calldata aaSignature
-    ) external view returns (bool isValid) {
-        require(nodeIds.length > 0, "No node IDs provided");
-        require(signature.length == G2_POINT_LENGTH, "Invalid signature length");
-        require(messagePoint.length == G2_POINT_LENGTH, "Invalid message length");
-        require(aaAddress != address(0), "Invalid AA address");
-        require(aaSignature.length > 0, "Invalid AA signature");
-        
-        // Perform validation and get result
-        isValid = _performFullValidation(nodeIds, signature, messagePoint, aaAddress, aaSignature);
     }
 
     // =============================================================
@@ -249,37 +224,6 @@ contract AAStarValidator {
             publicKeys[i] = registeredKeys[nodeIds[i]];
         }
     }
-
-    
-    // =============================================================
-    //                      INTERNAL FUNCTIONS
-    // =============================================================
-    
-    /**
-     * @dev Perform complete validation including BLS and AA signatures
-     * 
-     * @param nodeIds Array of node identifiers
-     * @param signature Aggregated BLS signature
-     * @param messagePoint G2-encoded message point
-     * @param aaAddress AA contract account address
-     * @param aaSignature AA account owner signature
-     * @return isValid Whether both validations pass
-     */
-    function _performFullValidation(
-        bytes32[] calldata nodeIds,
-        bytes calldata signature,
-        bytes calldata messagePoint,
-        address aaAddress,
-        bytes calldata aaSignature
-    ) internal view returns (bool isValid) {
-        // Step 1: Verify AA account owner signature first (cheaper, fail fast)
-        if (!_validateAASignatureOnMessage(aaAddress, aaSignature, messagePoint)) {
-            return false;
-        }
-        
-        // Step 2: Only verify expensive BLS signature if AA signature is valid
-        return _validateBLSSignature(nodeIds, signature, messagePoint);
-    }
     
     /**
      * @dev Validate BLS signature only
@@ -303,81 +247,24 @@ contract AAStarValidator {
         // Negate the aggregated public key
         bytes memory negatedAggregatedKey = _negateG1Point(aggregatedKey);
         
-        // Verify signature
-        return _validateWithNegatedKey(negatedAggregatedKey, signature, messagePoint);
+        // Verify signature with dynamic gas calculation
+        return _validateWithNegatedKey(negatedAggregatedKey, signature, messagePoint, nodeIds.length);
     }
     
     /**
-     * @dev Validate AA account owner ECDSA signature on the same message as BLS
-     * 
-     * @param aaAddress AA account owner address
-     * @param aaSignature ECDSA signature (65 bytes) on secp256k1 curve
-     * @param messagePoint G2-encoded message point (same message BLS nodes signed)
-     * @return isValid Whether ECDSA signature is valid
-     */
-    function _validateAASignatureOnMessage(
-        address aaAddress,
-        bytes calldata aaSignature,
-        bytes calldata messagePoint
-    ) internal pure returns (bool isValid) {
-        // Create message hash from the original message point
-        bytes32 messageHash = keccak256(messagePoint);
-        bytes32 ethSignedMessageHash = keccak256(
-            abi.encodePacked("\x19Ethereum Signed Message:\n32", messageHash)
-        );
-        
-        // Validate ECDSA signature on secp256k1 curve
-        require(aaSignature.length == 65, "Invalid signature length");
-        address recoveredSigner = _recoverSigner(ethSignedMessageHash, aaSignature);
-        return recoveredSigner == aaAddress;
-    }
-    
-    /**
-     * @dev Recover signer from ECDSA signature
-     * 
-     * @param messageHash Hash of the signed message
-     * @param signature ECDSA signature (65 bytes)
-     * @return signer Recovered signer address
-     */
-    function _recoverSigner(
-        bytes32 messageHash,
-        bytes calldata signature
-    ) internal pure returns (address signer) {
-        require(signature.length == 65, "Invalid signature length");
-        
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-        
-        assembly {
-            r := calldataload(signature.offset)
-            s := calldataload(add(signature.offset, 0x20))
-            v := byte(0, calldataload(add(signature.offset, 0x40)))
-        }
-        
-        // Adjust v for Ethereum's signature standard
-        if (v < 27) {
-            v += 27;
-        }
-        
-        require(v == 27 || v == 28, "Invalid signature v value");
-        
-        signer = ecrecover(messageHash, v, r, s);
-        require(signer != address(0), "Invalid signature");
-    }
-    
-    /**
-     * @dev Perform pairing verification using negated public key
+     * @dev Perform pairing verification using negated public key with dynamic gas calculation
      * 
      * @param negatedAggregatedKey Negated aggregated public key
      * @param signature Aggregate signature
      * @param messagePoint Message point
+     * @param nodeCount Number of nodes participating (for dynamic gas calculation)
      * @return isValid Whether verification is successful
      */
     function _validateWithNegatedKey(
         bytes memory negatedAggregatedKey,
         bytes calldata signature,
-        bytes calldata messagePoint
+        bytes calldata messagePoint,
+        uint256 nodeCount
     ) internal view returns (bool isValid) {
         bytes memory pairingData = _buildPairingDataFromComponents(
             negatedAggregatedKey,
@@ -385,8 +272,11 @@ contract AAStarValidator {
             messagePoint
         );
         
+        // Calculate required gas dynamically based on operation complexity
+        uint256 requiredGas = _calculateRequiredGas(nodeCount);
+        
         (bool callSuccess, bytes memory result) = PAIRING_PRECOMPILE.staticcall{
-            gas: 200000
+            gas: requiredGas
         }(pairingData);
         
         if (!callSuccess) {
@@ -754,16 +644,54 @@ contract AAStarValidator {
     // =============================================================
     
     /**
-     * @dev Get gas estimation
+     * @dev Calculate required gas for BLS validation based on EIP-2537 and operational complexity
      * 
-     * @param publicKeysCount Number of public keys
+     * @param nodeCount Number of nodes participating in the signature
+     * @return requiredGas Calculated gas requirement
+     */
+    function _calculateRequiredGas(uint256 nodeCount) internal pure returns (uint256 requiredGas) {
+        if (nodeCount == 0) return 0;
+        
+        // EIP-2537 pairing check: 32600 * k + 37700, where k = 2 (two pairings)
+        uint256 pairingBaseCost = 32600 * 2 + 37700; // 102,900
+        
+        // G1 point addition cost: (nodeCount - 1) * 500 (EIP-2537 G1 addition)
+        // Each additional node requires one G1 point addition for aggregation
+        uint256 g1AdditionCost = (nodeCount - 1) * 500;
+        
+        // Storage read cost: nodeCount * 2100 (cold SLOAD for public keys)
+        // Each node requires reading its public key from storage
+        uint256 storageReadCost = nodeCount * 2100;
+        
+        // EVM execution overhead: data preparation, memory operations, loops
+        // Includes: memory allocation, data copying, point negation, validation checks
+        uint256 evmExecutionCost = 50000 + (nodeCount * 1000); // Base + per-node overhead
+        
+        // Calculate total with components breakdown
+        uint256 totalBaseCost = pairingBaseCost + g1AdditionCost + storageReadCost + evmExecutionCost;
+        
+        // Safety margin: 25% buffer to handle network variations and unexpected costs
+        requiredGas = totalBaseCost * 125 / 100;
+        
+        // Minimum gas floor: ensure at least the proven working amount for small node counts
+        if (requiredGas < 600000) {
+            requiredGas = 600000;
+        }
+        
+        // Maximum gas cap: prevent excessive gas usage for very large node counts
+        if (requiredGas > 2000000) {
+            requiredGas = 2000000;
+        }
+    }
+    
+    /**
+     * @dev Get gas estimation (public interface for external callers)
+     * 
+     * @param nodeCount Number of nodes participating in signature
      * @return gasEstimate Estimated gas consumption
      */
-    function getGasEstimate(uint256 publicKeysCount) external pure returns (uint256 gasEstimate) {
-        if (publicKeysCount == 0) return 0;
-        
-        // Base cost + aggregation cost + negation cost + pairing verification cost
-        return 50000 + (publicKeysCount * 500) + 3000 + 180000;
+    function getGasEstimate(uint256 nodeCount) external pure returns (uint256 gasEstimate) {
+        return _calculateRequiredGas(nodeCount);
     }
     
     /**
