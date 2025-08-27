@@ -98,3 +98,5 @@ Thumbs.db
 # NestJS
 dist/
 build/
+
+data/
