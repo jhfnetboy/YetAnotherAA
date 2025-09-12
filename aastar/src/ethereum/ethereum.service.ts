@@ -10,8 +10,8 @@ export class EthereumService {
 
   // Contract ABIs
   private readonly FACTORY_ABI = [
-    "function getAddress(address owner, address validator, bool useAAStarValidator, uint256 salt) view returns (address)",
-    "function createAccountWithAAStarValidator(address owner, address aaStarValidator, bool useAAStarValidator, uint256 salt) returns (address)",
+    "function getAddress(address creator, address signer, address validator, bool useAAStarValidator, uint256 salt) view returns (address)",
+    "function createAccountWithAAStarValidator(address creator, address signer, address aaStarValidator, bool useAAStarValidator, uint256 salt) returns (address)",
   ];
 
   private readonly ACCOUNT_ABI = [
@@ -30,11 +30,10 @@ export class EthereumService {
   ];
 
   constructor(private configService: ConfigService) {
-    const rpcUrl = this.configService.get<string>("ETH_RPC_URL");
-    const bundlerRpcUrl = this.configService.get<string>("BUNDLER_RPC_URL");
-
-    this.provider = new ethers.JsonRpcProvider(rpcUrl);
-    this.bundlerProvider = new ethers.JsonRpcProvider(bundlerRpcUrl);
+    this.provider = new ethers.JsonRpcProvider(this.configService.get<string>("ethRpcUrl"));
+    this.bundlerProvider = new ethers.JsonRpcProvider(
+      this.configService.get<string>("bundlerRpcUrl")
+    );
   }
 
   getProvider(): ethers.JsonRpcProvider {
@@ -46,18 +45,27 @@ export class EthereumService {
   }
 
   getFactoryContract(): ethers.Contract {
-    const address = this.configService.get<string>("AASTAR_ACCOUNT_FACTORY_ADDRESS");
-    return new ethers.Contract(address, this.FACTORY_ABI, this.provider);
+    return new ethers.Contract(
+      this.configService.get<string>("aastarAccountFactoryAddress"),
+      this.FACTORY_ABI,
+      this.provider
+    );
   }
 
   getEntryPointContract(): ethers.Contract {
-    const address = this.configService.get<string>("ENTRY_POINT_ADDRESS");
-    return new ethers.Contract(address, this.ENTRY_POINT_ABI, this.provider);
+    return new ethers.Contract(
+      this.configService.get<string>("entryPointAddress"),
+      this.ENTRY_POINT_ABI,
+      this.provider
+    );
   }
 
   getValidatorContract(): ethers.Contract {
-    const address = this.configService.get<string>("VALIDATOR_CONTRACT_ADDRESS");
-    return new ethers.Contract(address, this.VALIDATOR_ABI, this.provider);
+    return new ethers.Contract(
+      this.configService.get<string>("validatorContractAddress"),
+      this.VALIDATOR_ABI,
+      this.provider
+    );
   }
 
   getAccountContract(address: string): ethers.Contract {
@@ -76,6 +84,7 @@ export class EthereumService {
 
   async getUserOpHash(userOp: UserOperation): Promise<string> {
     const entryPoint = this.getEntryPointContract();
+    // Per ERC-4337, signature must be "0x" when calculating userOpHash
     const userOpArray = [
       userOp.sender,
       userOp.nonce,
@@ -87,7 +96,7 @@ export class EthereumService {
       userOp.maxFeePerGas,
       userOp.maxPriorityFeePerGas,
       userOp.paymasterAndData,
-      userOp.signature,
+      "0x", // Always use empty signature for hash calculation
     ];
     return await entryPoint.getUserOpHash(userOpArray);
   }
@@ -96,9 +105,9 @@ export class EthereumService {
     try {
       return await this.bundlerProvider.send("eth_estimateUserOperationGas", [
         userOp,
-        this.configService.get("ENTRY_POINT_ADDRESS"),
+        this.configService.get<string>("entryPointAddress"),
       ]);
-    } catch (error) {
+    } catch {
       // Return default values if estimation fails
       return {
         callGasLimit: "0x249f0", // 150000
@@ -111,7 +120,7 @@ export class EthereumService {
   async sendUserOperation(userOp: any): Promise<string> {
     return await this.bundlerProvider.send("eth_sendUserOperation", [
       userOp,
-      this.configService.get("ENTRY_POINT_ADDRESS"),
+      this.configService.get<string>("entryPointAddress"),
     ]);
   }
 
@@ -128,7 +137,7 @@ export class EthereumService {
         if (receipt && (receipt.transactionHash || receipt.receipt?.transactionHash)) {
           return receipt.transactionHash || receipt.receipt?.transactionHash;
         }
-      } catch (error) {
+      } catch {
         // Continue polling
       }
       await new Promise(resolve => setTimeout(resolve, pollInterval));

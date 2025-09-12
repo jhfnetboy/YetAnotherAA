@@ -32,9 +32,9 @@ export class AuthService {
     private configService: ConfigService
   ) {
     // Load WebAuthn configuration from environment variables
-    this.rpName = this.configService.get<string>("WEBAUTHN_RP_NAME") || "AAstar";
-    this.rpID = this.configService.get<string>("WEBAUTHN_RP_ID") || "localhost";
-    this.origin = this.configService.get<string>("WEBAUTHN_ORIGIN") || "http://localhost:8080";
+    this.rpName = this.configService.get<string>("webauthnRpName");
+    this.rpID = this.configService.get<string>("webauthnRpId");
+    this.origin = this.configService.get<string>("webauthnOrigin");
     this.expectedOrigin = this.origin;
   }
 
@@ -48,8 +48,7 @@ export class AuthService {
 
     // Generate HDWallet for the user
     const userWallet = ethers.Wallet.createRandom();
-    const encryptionKey =
-      this.configService.get<string>("USER_ENCRYPTION_KEY") || "default-key-change-in-production";
+    const encryptionKey = this.configService.get<string>("userEncryptionKey");
     const encryptedPrivateKey = CryptoUtil.encrypt(userWallet.privateKey, encryptionKey);
 
     console.log("User Registration Debug:");
@@ -69,7 +68,7 @@ export class AuthService {
 
     await this.databaseService.saveUser(user);
 
-    const { password, encryptedPrivateKey: _, ...result } = user;
+    const { password: _password, encryptedPrivateKey: _encryptedPrivateKey, ...result } = user;
     return {
       user: result,
       access_token: this.generateToken(user),
@@ -87,7 +86,7 @@ export class AuthService {
       throw new UnauthorizedException("Invalid credentials");
     }
 
-    const { password, ...result } = user;
+    const { password: _password, ...result } = user;
     return {
       user: result,
       access_token: this.generateToken(user),
@@ -97,7 +96,7 @@ export class AuthService {
   async validateUser(email: string, pass: string): Promise<any> {
     const user = await this.databaseService.findUserByEmail(email);
     if (user && (await bcrypt.compare(pass, user.password))) {
-      const { password, ...result } = user;
+      const { password: _password, ...result } = user;
       return result;
     }
     return null;
@@ -108,20 +107,48 @@ export class AuthService {
     if (!user) {
       throw new UnauthorizedException("User not found");
     }
-    const { password, ...result } = user;
+    const { password: _password, ...result } = user;
     return result;
   }
 
   async getUserWallet(userId: string): Promise<ethers.Wallet> {
     const user = await this.databaseService.findUserById(userId);
-    if (!user || !user.encryptedPrivateKey) {
-      throw new Error("User wallet not found");
+    if (!user) {
+      throw new Error(`User not found for userId: ${userId}`);
     }
 
-    const encryptionKey =
-      this.configService.get<string>("USER_ENCRYPTION_KEY") || "default-key-change-in-production";
-    const privateKey = CryptoUtil.decrypt(user.encryptedPrivateKey, encryptionKey);
-    return new ethers.Wallet(privateKey);
+    if (!user.encryptedPrivateKey) {
+      throw new Error(`User wallet not initialized for userId: ${userId}`);
+    }
+
+    const encryptionKey = this.configService.get<string>("userEncryptionKey");
+
+    try {
+      const privateKey = CryptoUtil.decrypt(user.encryptedPrivateKey, encryptionKey);
+
+      // Validate that the decrypted private key is valid
+      if (!privateKey || !privateKey.startsWith("0x") || privateKey.length !== 66) {
+        throw new Error("Decrypted private key is invalid");
+      }
+
+      const wallet = new ethers.Wallet(privateKey);
+
+      // Verify that the wallet address matches the stored address
+      if (wallet.address.toLowerCase() !== user.walletAddress.toLowerCase()) {
+        throw new Error(
+          `Wallet address mismatch! Expected: ${user.walletAddress}, Got: ${wallet.address}`
+        );
+      }
+
+      return wallet;
+    } catch (error) {
+      // Log the error for debugging but don't expose sensitive information
+      console.error(`Failed to get user wallet for userId ${userId}:`, error.message);
+
+      // IMPORTANT: Never fall back to a default wallet!
+      // Always throw an error to prevent security issues
+      throw new Error(`Failed to decrypt user wallet: ${error.message}`);
+    }
   }
 
   private generateToken(user: any) {
@@ -198,8 +225,8 @@ export class AuthService {
 
       // Generate HDWallet for the user (same as regular registration)
       const userWallet = ethers.Wallet.createRandom();
-      const encryptionKey =
-        this.configService.get<string>("USER_ENCRYPTION_KEY") || "default-key-change-in-production";
+      const encryptionKey = this.configService.get<string>("userEncryptionKey");
+
       const encryptedPrivateKey = CryptoUtil.encrypt(userWallet.privateKey, encryptionKey);
 
       console.log("Passkey User Registration Debug:");
@@ -237,12 +264,12 @@ export class AuthService {
       // 清除challenge
       this.challengeStore.delete(registerDto.email);
 
-      const { password, ...result } = user;
+      const { password: _password, ...result } = user;
       return {
         user: result,
         access_token: this.generateToken(user),
       };
-    } catch (error) {
+    } catch {
       this.challengeStore.delete(registerDto.email);
       throw new UnauthorizedException("Passkey registration failed");
     }
@@ -314,12 +341,12 @@ export class AuthService {
       // 清除challenge
       this.challengeStore.delete(`login_${expectedChallenge}`);
 
-      const { password, ...result } = user;
+      const { password: _password, ...result } = user;
       return {
         user: result,
         access_token: this.generateToken(user),
       };
-    } catch (error) {
+    } catch {
       throw new UnauthorizedException("Passkey authentication failed");
     }
   }
@@ -425,7 +452,7 @@ export class AuthService {
       return {
         message: "Device passkey registered successfully",
       };
-    } catch (error) {
+    } catch {
       this.challengeStore.delete(`device_${registerDto.email}`);
       throw new UnauthorizedException("Passkey registration failed");
     }

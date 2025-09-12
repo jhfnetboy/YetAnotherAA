@@ -1,11 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-  OnModuleInit,
-  Logger,
-  Inject,
-  forwardRef,
-} from "@nestjs/common";
+import { Injectable, OnModuleInit, Logger, Inject, forwardRef } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NodeKeyPair, NodeState } from "../../interfaces/node.interface.js";
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "fs";
@@ -22,10 +15,10 @@ export class NodeService implements OnModuleInit {
   private contractAddress: string;
 
   constructor(
-    private configService: ConfigService,
     @Inject(forwardRef(() => BlsService))
     private blsService: BlsService,
-    private blockchainService: BlockchainService
+    private blockchainService: BlockchainService,
+    private configService: ConfigService
   ) {}
 
   async onModuleInit() {
@@ -35,25 +28,21 @@ export class NodeService implements OnModuleInit {
   private async initializeNode(): Promise<void> {
     this.loadContractAddress();
 
-    if (process.env.NODE_ID) {
-      await this.initializeWithSpecificNodeId(process.env.NODE_ID);
-    } else if (process.env.NODE_STATE_FILE) {
-      await this.initializeWithStateFile(process.env.NODE_STATE_FILE);
+    const nodeId = this.configService.get<string>("nodeId");
+    const nodeStateFile = this.configService.get<string>("nodeStateFile");
+
+    if (nodeId) {
+      await this.initializeWithSpecificNodeId(nodeId);
+    } else if (nodeStateFile) {
+      await this.initializeWithStateFile(nodeStateFile);
     } else {
       await this.initializeWithAutoDiscovery();
     }
   }
 
   private loadContractAddress(): void {
-    this.contractAddress =
-      process.env.VALIDATOR_CONTRACT_ADDRESS || process.env.CONTRACT_ADDRESS || "";
-
-    if (this.contractAddress) {
-      this.logger.log(`Using contract address from environment: ${this.contractAddress}`);
-    } else {
-      this.logger.error("VALIDATOR_CONTRACT_ADDRESS environment variable is required");
-      throw new Error("VALIDATOR_CONTRACT_ADDRESS environment variable is required");
-    }
+    this.contractAddress = this.configService.get<string>("validatorContractAddress")!;
+    this.logger.log(`Using contract address from environment: ${this.contractAddress}`);
   }
 
   private async initializeWithSpecificNodeId(nodeId: string): Promise<void> {
@@ -127,14 +116,12 @@ export class NodeService implements OnModuleInit {
     const privateKeyBytes = randomBytes(32);
     const privateKey = "0x" + privateKeyBytes.toString("hex");
     const publicKey = await this.blsService.getPublicKeyFromPrivateKey(privateKey);
-    const contractNodeId = this.generateContractNodeId(nodeId);
 
     this.nodeState = {
       nodeId,
       nodeName: `node_${nodeId.substring(2, 8)}`,
       privateKey,
       publicKey,
-      contractNodeId,
       registrationStatus: "pending",
       contractAddress: this.contractAddress,
       createdAt: new Date().toISOString(),
@@ -142,10 +129,6 @@ export class NodeService implements OnModuleInit {
     };
 
     this.saveNodeState();
-  }
-
-  private generateContractNodeId(nodeId: string): string {
-    return "0x" + createHash("sha256").update(nodeId).digest("hex");
   }
 
   private saveNodeState(): void {
@@ -166,8 +149,7 @@ export class NodeService implements OnModuleInit {
   getNodeForSigning(): NodeKeyPair {
     const currentNode = this.getCurrentNode();
     return {
-      originalNodeId: currentNode.nodeId,
-      contractNodeId: currentNode.contractNodeId,
+      nodeId: currentNode.nodeId,
       nodeName: currentNode.nodeName,
       privateKey: currentNode.privateKey,
       publicKey: currentNode.publicKey,
@@ -187,7 +169,7 @@ export class NodeService implements OnModuleInit {
       // Check current registration status on-chain
       const isRegistered = await this.blockchainService.checkNodeRegistration(
         this.contractAddress,
-        this.nodeState.contractNodeId
+        this.nodeState.nodeId
       );
 
       if (isRegistered) {
@@ -217,7 +199,7 @@ export class NodeService implements OnModuleInit {
 
       const txHash = await this.blockchainService.registerNodeOnChain(
         this.contractAddress,
-        this.nodeState.contractNodeId,
+        this.nodeState.nodeId,
         eip2537PublicKey
       );
 

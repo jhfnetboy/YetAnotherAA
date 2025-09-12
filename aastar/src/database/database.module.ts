@@ -5,48 +5,56 @@ import { DatabaseService } from "./database.service";
 import { JsonAdapter } from "./adapters/json.adapter";
 import { PostgresAdapter } from "./adapters/postgres.adapter";
 import { User, Account, Transfer, Passkey, BlsConfig } from "../entities";
+import { EnvConfigService } from "../config/env.config";
 
 @Global()
 @Module({})
 export class DatabaseModule {
   static forRoot(): DynamicModule {
-    return {
-      module: DatabaseModule,
-      imports: [
-        ConfigModule,
+    // Use environment variable directly for module initialization
+    const dbType = process.env.DB_TYPE || "json";
+
+    const imports: any[] = [ConfigModule];
+    const providers: any[] = [JsonAdapter];
+
+    // Only import TypeORM modules when using postgres
+    if (dbType === "postgres") {
+      imports.push(
         TypeOrmModule.forRootAsync({
           imports: [ConfigModule],
           useFactory: async (configService: ConfigService) => {
-            const dbType = configService.get<string>("DB_TYPE", "json");
-
-            if (dbType === "postgres") {
-              return {
-                type: "postgres",
-                host: configService.get<string>("DB_HOST", "localhost"),
-                port: configService.get<number>("DB_PORT", 5432),
-                username: configService.get<string>("DB_USERNAME", "postgres"),
-                password: configService.get<string>("DB_PASSWORD", ""),
-                database: configService.get<string>("DB_NAME", "aastar"),
-                entities: [User, Account, Transfer, Passkey, BlsConfig],
-                synchronize: true, // Auto-create tables
-                logging: configService.get<string>("NODE_ENV") === "development",
-                ssl: {
-                  rejectUnauthorized: false, // For self-signed certificates
-                },
-                extra: {
-                  ssl: true,
-                },
-              };
+            const databaseUrl = configService.get<string>("DATABASE_URL");
+            if (!databaseUrl) {
+              throw new Error(
+                "DATABASE_URL environment variable is required when DB_TYPE is 'postgres'"
+              );
             }
 
-            // Return null for JSON mode - no TypeORM connection needed
-            return null;
+            return {
+              type: "postgres",
+              url: databaseUrl,
+              entities: [User, Account, Transfer, Passkey, BlsConfig],
+              synchronize: true, // Auto-create tables
+              logging: configService.get<string>("NODE_ENV") === "development",
+              ssl:
+                databaseUrl &&
+                (databaseUrl.includes("sslmode=require") || databaseUrl.includes("ssl=true"))
+                  ? { rejectUnauthorized: false }
+                  : undefined,
+            };
           },
           inject: [ConfigService],
         }),
-        TypeOrmModule.forFeature([User, Account, Transfer, Passkey, BlsConfig]),
-      ],
+        TypeOrmModule.forFeature([User, Account, Transfer, Passkey, BlsConfig])
+      );
+      providers.push(PostgresAdapter);
+    }
+
+    return {
+      module: DatabaseModule,
+      imports,
       providers: [
+        ...providers,
         {
           provide: DatabaseService,
           useFactory: (
@@ -58,8 +66,6 @@ export class DatabaseModule {
           },
           inject: [ConfigService, JsonAdapter, { token: PostgresAdapter, optional: true }],
         },
-        JsonAdapter,
-        ...(process.env.DB_TYPE === "postgres" ? [PostgresAdapter] : []),
       ],
       exports: [DatabaseService],
     };
