@@ -646,6 +646,8 @@ export default function TransferPage() {
                   onTokenChange={setSelectedToken}
                   accountAddress={account?.address}
                   showBalances={true}
+                  showSearch={true}
+                  showOnlyWithBalance={false}
                 />
               </div>
 
