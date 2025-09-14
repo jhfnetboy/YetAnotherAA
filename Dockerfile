@@ -65,7 +65,7 @@ RUN echo 'module.exports = {' > ecosystem.config.js && \
     echo '      name: "aastar-frontend",' >> ecosystem.config.js && \
     echo '      cwd: "./aastar-frontend",' >> ecosystem.config.js && \
     echo '      script: "npm",' >> ecosystem.config.js && \
-    echo '      args: "run start",' >> ecosystem.config.js && \
+    echo '      args: "run start:prod",' >> ecosystem.config.js && \
     echo '      env: {' >> ecosystem.config.js && \
     echo '        NODE_ENV: process.env.NODE_ENV || "development",' >> ecosystem.config.js && \
     echo '        PORT: "80",' >> ecosystem.config.js && \
