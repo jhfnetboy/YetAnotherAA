@@ -6,6 +6,7 @@
     "dev": "next dev -p 8080",
     "build": "next build",
     "start": "next start -p 8080",
+    "start:prod": "next start -p 80",
     "lint": "next lint",
     "lint:check": "next lint",
     "format": "prettier --write \"**/*.{js,jsx,ts,tsx,json,css,md}\"",
