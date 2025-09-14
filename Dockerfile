@@ -13,7 +13,7 @@ COPY . .
 ENV NEXT_PUBLIC_API_URL=/api/v1
 ENV BACKEND_API_URL=http://localhost:3000
 # Default values for development, can be overridden at runtime
-ENV WEBAUTHN_ORIGIN=http://localhost:8080
+ENV WEBAUTHN_ORIGIN=http://localhost
 RUN npm ci --include=dev && npm run build
 
 # Copy the node configuration file for signer (in case it wasn't copied)
@@ -68,7 +68,7 @@ RUN echo 'module.exports = {' > ecosystem.config.js && \
     echo '      args: "run start",' >> ecosystem.config.js && \
     echo '      env: {' >> ecosystem.config.js && \
     echo '        NODE_ENV: process.env.NODE_ENV || "development",' >> ecosystem.config.js && \
-    echo '        PORT: "8080",' >> ecosystem.config.js && \
+    echo '        PORT: "80",' >> ecosystem.config.js && \
     echo '        NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || "/api/v1",' >> ecosystem.config.js && \
     echo '        BACKEND_API_URL: process.env.BACKEND_API_URL || "http://localhost:3000"' >> ecosystem.config.js && \
     echo '      }' >> ecosystem.config.js && \
@@ -77,7 +77,7 @@ RUN echo 'module.exports = {' > ecosystem.config.js && \
     echo '};' >> ecosystem.config.js
 
 # Expose port 8080 for frontend (as requested)
-EXPOSE 8080
+EXPOSE 80
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
