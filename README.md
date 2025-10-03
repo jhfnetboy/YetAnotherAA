@@ -93,26 +93,26 @@ npm run dev -w aastar-frontend     # Frontend (port 8080)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Frontend (Next.js)                        │
-│              WebAuthn + Biometric Interface                  │
+│                    Frontend (Next.js)                       │
+│              WebAuthn + Biometric Interface                 │
 └────────────────────┬────────────────────────────────────────┘
                      │
 ┌────────────────────▼────────────────────────────────────────┐
-│              Backend API (NestJS)                            │
+│              Backend API (NestJS)                           │
 │   • WebAuthn Authentication  • KMS Integration              │
 │   • Account Management       • Transfer Orchestration       │
-└────────┬───────────────────────────────────┬────────────────┘
-         │                                   │
-┌────────▼──────────┐              ┌────────▼────────────────┐
-│ BLS Signer Service│              │   KMS Service           │
-│ • Gossip Network  │              │ • Key Generation        │
-│ • Signature Agg   │              │ • Secure Signing        │
-└────────┬──────────┘              └─────────────────────────┘
+└────────┬──────────────────────────────────┬─────────────────┘
+         │                                  │
+┌────────▼──────────┐              ┌────────▼─────────────────┐
+│ BLS Signer Service│              │   KMS Service            │
+│ • Gossip Network  │              │ • Key Generation         │
+│ • Signature Agg   │              │ • Secure Signing         │
+└────────┬──────────┘              └──────────────────────────┘
          │
-┌────────▼─────────────────────────────────────────────────────┐
-│               Ethereum (ERC-4337)                             │
-│  EntryPoint → Factory → AAStarAccount → Validator (BLS)      │
-└───────────────────────────────────────────────────────────────┘
+┌────────▼────────────────────────────────────────────────────┐
+│               Ethereum (ERC-4337)                           │
+│  EntryPoint → Factory → AAStarAccount → Validator (BLS)     │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ### Key Technical Features
