@@ -153,10 +153,8 @@ function _calculateRequiredGas(uint256 nodeCount) internal pure returns (uint256
 ### Successful Transfer Proof
 
 - **Transaction**:
-  [0x8aa6fdef...714370a55](https://sepolia.etherscan.io/tx/0x8aa6fdef19f66e687a570c4fefeb7524538a32fcb06320251d25c5b714370a55)
-- **Amount**: 0.002 ETH
-- **Gas Used**: 653,060
-- **Status**: ✅ BLS aggregate signature verified
+  [0x39f8dbf5...30139f985](https://sepolia.etherscan.io/tx/0x39f8dbf5e99bc40b5032c0f260aa003901c372873fb989f2dd3c81030139f985)
+- **Amount**: 1 PNT
 
 ### Gas Efficiency
 
