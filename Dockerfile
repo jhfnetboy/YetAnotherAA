@@ -13,7 +13,8 @@ COPY aastar/package*.json ./aastar/
 COPY aastar-frontend/package*.json ./aastar-frontend/
 
 # Install dependencies with force flag to bypass platform-specific issues
-RUN npm ci --include=dev --force
+RUN npm ci --include=dev --force && \
+    cd validator && npm ci --include=dev --force && cd ..
 
 # Copy source code
 COPY . .
