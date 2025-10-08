@@ -4,7 +4,6 @@
   "description": "WebAuthn/Passkey + BLS Aggregate Signature + ERC-4337 Account Abstraction - Biometric Authentication for Ethereum",
   "private": true,
   "workspaces": [
-    "signer",
     "aastar",
     "aastar-frontend"
   ],
