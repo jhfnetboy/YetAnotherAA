@@ -25,9 +25,7 @@ RUN cd validator && npm run build && cd .. && \
     npm run build -w aastar && \
     npm run build -w aastar-frontend
 
-# Copy configuration files
-COPY validator/node_dev_001.json ./validator/ 2>/dev/null || true
-COPY ecosystem.config.js ./
+# The configuration files are already copied with 'COPY . .' above
 
 # Expose port for frontend
 EXPOSE 80
