@@ -26,18 +26,38 @@ account deployment** via Paymaster sponsorship.
 
 ## ⚡ Quick Start
 
+### Option 1: Docker Deployment (Recommended)
+
 ```bash
-# Clone and install
+# Clone the repository
+git clone https://github.com/fanhousanbu/YetAnotherAA.git
+cd YetAnotherAA
+
+# Build the image
+docker build -t yaaa:latest .
+
+# Run the container
+docker run -p 80:80 yaaa:latest
+
+# Visit http://localhost and register with Face ID/Touch ID!
+```
+
+### Option 2: Local Development
+
+```bash
+# Clone and install dependencies
 git clone https://github.com/fanhousanbu/YetAnotherAA.git
 cd YetAnotherAA && npm install
 
-# Start all services (using VS Code launch configuration)
-npm run start:dev -w aastar        # Backend API (port 3000)
+# Start all services (VS Code launch configuration recommended)
 npm run start:dev -w signer        # BLS Signer (port 3001)
+npm run start:dev -w aastar        # Backend API (port 3000)
 npm run dev -w aastar-frontend     # Frontend (port 8080)
 
-# Visit http://localhost:8080 and register with Face ID/Touch ID!
+# Visit http://localhost:8080 and start using!
 ```
+
+> **💡 Tip**: Use VS Code's "Run and Debug" panel to launch all services with one click (`.vscode/launch.json` configured)
 
 ## ✨ Core Innovations
 
@@ -222,6 +242,28 @@ This project demonstrates:
 
 ## 🚀 Deployment
 
+### Docker Production Deployment
+
+```bash
+# Run with environment variables
+docker run -p 80:80 \
+  -e KMS_ENABLED=true \
+  -e KMS_ENDPOINT=https://kms.your-domain.com \
+  -e DATABASE_TYPE=postgres \
+  -e DATABASE_HOST=your-db-host \
+  -e DATABASE_PORT=5432 \
+  -e DATABASE_NAME=aastar \
+  -e DATABASE_USERNAME=your-user \
+  -e DATABASE_PASSWORD=your-password \
+  -e ENTRY_POINT_V7_ADDRESS=0x0000000071727De22E5E9d8BAf0edAc6f37da032 \
+  -e AASTAR_ACCOUNT_FACTORY_V7_ADDRESS=0xYourFactoryAddress \
+  -e VALIDATOR_CONTRACT_V7_ADDRESS=0xYourValidatorAddress \
+  yaaa:latest
+
+# Or use docker-compose (recommended)
+docker-compose up -d
+```
+
 ### Reference Deployment (Sepolia Testnet)
 
 For testing purposes only:
@@ -232,18 +274,75 @@ For testing purposes only:
 - **EntryPoint v0.6**: `0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789`
 - **EntryPoint v0.7**: `0x0000000071727De22E5E9d8BAf0edAc6f37da032`
 
-> **⚠️ Production**: Deploy your own contracts. Private keys only needed for
-> contract deployment - runtime wallets are KMS-managed.
+> **⚠️ Production**: Deploy your own contracts. Private keys only needed for contract deployment - runtime wallets are KMS-managed.
+
+### Smart Contract Deployment
+
+```bash
+# Navigate to validator directory
+cd validator
+
+# Compile contracts
+forge build
+
+# Deploy validator and factory contracts (one-time)
+forge script script/DeployValidator.s.sol \
+  --rpc-url $RPC_URL \
+  --private-key $DEPLOYER_PRIVATE_KEY \
+  --broadcast
+```
 
 ## 🌟 Enhanced Features
 
+- ✅ **Docker Deployment**: One-click build and run, production-ready
 - ✅ **Zero Configuration**: No private keys needed for operation
-- ✅ **Gasless Onboarding**: Account creation requires zero ETH
+- ✅ **Gasless Deployment**: Account creation requires zero ETH
 - ✅ **Multi-Version Support**: EntryPoint v0.6, v0.7, v0.8
-- ✅ **KMS Integration**: Production-ready key management
+- ✅ **KMS Integration**: Production-grade key management
 - ✅ **Unified Ownership**: User wallet controls everything
 - ✅ **Real-time Gossip**: Automatic BLS node discovery
 - ✅ **Full Stack**: Complete monorepo with all components
+
+## 🔧 Requirements
+
+- **Node.js**: >= 20.19.0
+- **npm**: >= 10.0.0
+- **Docker**: >= 20.10 (for Docker deployment)
+- **Foundry**: Latest version (for contract development)
+- **HTTPS**: WebAuthn requires HTTPS (or localhost)
+
+## 🐳 Docker Configuration
+
+The project includes complete Docker configuration with the following features:
+
+- **Multi-stage Build**: Optimized image size
+- **PM2 Process Management**: Auto-restart and load balancing
+- **Health Check**: Container health monitoring
+- **Environment Variables**: Flexible production configuration
+
+### Dockerfile Architecture
+
+```dockerfile
+FROM node:20.19.0-alpine
+RUN npm install -g pm2 && apk add --no-cache git
+COPY . .
+RUN npm ci --include=dev --force
+RUN npm run build
+CMD ["pm2-runtime", "start", "ecosystem.config.js"]
+```
+
+### View Container Logs
+
+```bash
+# View all service logs
+docker logs -f <container_id>
+
+# View specific service
+docker exec <container_id> pm2 logs
+
+# Real-time monitoring
+docker exec <container_id> pm2 monit
+```
 
 ## 📄 License
 
