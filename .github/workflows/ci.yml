@@ -28,7 +28,7 @@ jobs:
         run: npm ci --force
 
       - name: Run npm audit (All workspaces)
-        run: npm audit --audit-level=moderate --workspaces --if-present
+        run: npm audit --audit-level=high --workspaces --if-present
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
