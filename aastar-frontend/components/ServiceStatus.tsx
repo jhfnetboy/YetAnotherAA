@@ -30,7 +30,17 @@ interface ServiceHealth {
   };
 }
 
-export default function ServiceStatus() {
+interface ServiceStatusProps {
+  isOpen?: boolean;
+  onClose?: () => void;
+  embedded?: boolean;
+}
+
+export default function ServiceStatus({
+  isOpen,
+  onClose: _onClose,
+  embedded: _embedded = false,
+}: ServiceStatusProps = {}) {
   const [isVisible, setIsVisible] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [backendStatus, setBackendStatus] = useState<"online" | "offline" | "checking">("checking");
@@ -40,6 +50,13 @@ export default function ServiceStatus() {
   const [signerCount, setSignerCount] = useState(0);
   const [lastCheck, setLastCheck] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Sync with external control (for mobile)
+  useEffect(() => {
+    if (isOpen !== undefined) {
+      setIsVisible(isOpen);
+    }
+  }, [isOpen]);
 
   const checkHealth = async () => {
     setIsRefreshing(true);
@@ -108,14 +125,67 @@ export default function ServiceStatus() {
     }
   };
 
+  // If controlled externally and is open, show inline content (for mobile embed)
+  if (isOpen !== undefined && isOpen) {
+    return (
+      <div className="space-y-3">
+        {/* Backend Status */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className={`w-3 h-3 rounded-full ${getBackendColor()}`} />
+            <div className="text-sm">
+              <span className="font-medium text-gray-900 dark:text-white">Backend:</span>
+              <span className="ml-2 text-gray-700 dark:text-gray-300">
+                {backendStatus === "online"
+                  ? "Online"
+                  : backendStatus === "offline"
+                    ? "Offline"
+                    : "Checking..."}
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={checkHealth}
+            disabled={isRefreshing}
+            className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors touch-manipulation"
+            title="Refresh Status"
+          >
+            <ArrowPathIcon
+              className={`w-4 h-4 text-gray-600 dark:text-gray-400 ${isRefreshing ? "animate-spin" : ""}`}
+            />
+          </button>
+        </div>
+
+        {/* Signer Nodes Status */}
+        <div className="flex items-center space-x-3">
+          <div className={`w-3 h-3 rounded-full ${getSignerColor()}`} />
+          <div className="text-sm">
+            <span className="font-medium text-gray-900 dark:text-white">Signers:</span>
+            <span className="ml-2 text-gray-700 dark:text-gray-300">
+              {signerStatus === "checking" ? "Checking..." : `${signerCount} active`}
+            </span>
+          </div>
+        </div>
+
+        {/* Last Check Time */}
+        {lastCheck && (
+          <div className="text-xs text-gray-600 dark:text-gray-400 pt-1 border-t border-gray-200 dark:border-gray-700">
+            Last check: {lastCheck.toLocaleTimeString()}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Desktop mode - floating panel
   return (
     <>
-      {/* Floating Button */}
+      {/* Floating Button - Desktop only */}
       {!isVisible && (
         <button
           onClick={() => setIsVisible(true)}
-          className="fixed bottom-4 right-4 bg-blue-600 hover:bg-blue-700 text-white rounded-full p-3 shadow-lg z-50 transition-all"
-          title="Show Service Status"
+          className="fixed bottom-4 right-4 bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white rounded-full p-3 shadow-lg z-50 transition-all"
+          title="Service Status"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
@@ -130,43 +200,45 @@ export default function ServiceStatus() {
 
       {/* Status Panel */}
       {isVisible && (
-        <div className="fixed bottom-4 right-4 bg-white/95 backdrop-blur-sm rounded-lg shadow-lg z-50 transition-all">
+        <div className="fixed bottom-4 right-4 w-auto bg-white/95 dark:bg-gray-800/95 backdrop-blur-sm rounded-lg shadow-lg z-50 transition-all">
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200">
-            <h3 className="text-sm font-semibold text-gray-700">Service Status</h3>
+          <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-700">
+            <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+              Service Status
+            </h3>
             <div className="flex items-center space-x-1">
               {/* Refresh Button */}
               <button
                 onClick={checkHealth}
                 disabled={isRefreshing}
-                className="p-1 hover:bg-gray-100 rounded transition-colors"
+                className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
                 title="Refresh Status"
               >
                 <ArrowPathIcon
-                  className={`w-4 h-4 text-gray-600 ${isRefreshing ? "animate-spin" : ""}`}
+                  className={`w-4 h-4 text-gray-600 dark:text-gray-400 ${isRefreshing ? "animate-spin" : ""}`}
                 />
               </button>
 
               {/* Expand/Collapse Button */}
               <button
                 onClick={() => setIsExpanded(!isExpanded)}
-                className="p-1 hover:bg-gray-100 rounded transition-colors"
+                className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
                 title={isExpanded ? "Collapse" : "Expand"}
               >
                 {isExpanded ? (
-                  <ChevronDownIcon className="w-4 h-4 text-gray-600" />
+                  <ChevronDownIcon className="w-4 h-4 text-gray-600 dark:text-gray-400" />
                 ) : (
-                  <ChevronUpIcon className="w-4 h-4 text-gray-600" />
+                  <ChevronUpIcon className="w-4 h-4 text-gray-600 dark:text-gray-400" />
                 )}
               </button>
 
               {/* Close Button */}
               <button
                 onClick={() => setIsVisible(false)}
-                className="p-1 hover:bg-gray-100 rounded transition-colors"
+                className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
                 title="Close"
               >
-                <XMarkIcon className="w-4 h-4 text-gray-600" />
+                <XMarkIcon className="w-4 h-4 text-gray-600 dark:text-gray-400" />
               </button>
             </div>
           </div>
@@ -179,7 +251,7 @@ export default function ServiceStatus() {
                 <div className={`w-3 h-3 rounded-full ${getBackendColor()}`} />
                 <div className="text-sm">
                   <span className="font-medium">Backend:</span>
-                  <span className="ml-2 text-gray-600">
+                  <span className="ml-2 text-gray-700 dark:text-gray-300">
                     {backendStatus === "online"
                       ? "Online"
                       : backendStatus === "offline"
@@ -194,7 +266,7 @@ export default function ServiceStatus() {
                 <div className={`w-3 h-3 rounded-full ${getSignerColor()}`} />
                 <div className="text-sm">
                   <span className="font-medium">Signers:</span>
-                  <span className="ml-2 text-gray-600">
+                  <span className="ml-2 text-gray-700 dark:text-gray-300">
                     {signerStatus === "checking" ? "Checking..." : `${signerCount} active`}
                   </span>
                 </div>
@@ -205,13 +277,13 @@ export default function ServiceStatus() {
                 <>
                   {/* Last Check Time */}
                   {lastCheck && (
-                    <div className="text-xs text-gray-500 pt-1 border-t border-gray-200">
+                    <div className="text-xs text-gray-600 dark:text-gray-400 pt-1 border-t border-gray-200 dark:border-gray-700">
                       Last check: {lastCheck.toLocaleTimeString()}
                     </div>
                   )}
 
                   {/* Legend */}
-                  <div className="text-xs text-gray-500 space-y-1 pt-2 border-t border-gray-200">
+                  <div className="text-xs text-gray-600 dark:text-gray-400 space-y-1 pt-2 border-t border-gray-200 dark:border-gray-700">
                     <div className="flex items-center space-x-2">
                       <div className="w-2 h-2 rounded-full bg-green-500" />
                       <span>Service healthy</span>

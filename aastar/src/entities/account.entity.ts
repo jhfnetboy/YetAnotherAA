@@ -20,10 +20,7 @@ export class Account {
   address: string;
 
   @Column()
-  creatorAddress: string;
-
-  @Column()
-  signerAddress: string;
+  signerAddress: string; // Acts as both signer and creator in unified architecture
 
   @Column()
   salt: number;
@@ -42,6 +39,12 @@ export class Account {
 
   @Column()
   validatorAddress: string;
+
+  @Column({ default: "0.6" })
+  entryPointVersion: string;
+
+  @Column({ nullable: true })
+  factoryAddress: string;
 
   @CreateDateColumn()
   createdAt: Date;

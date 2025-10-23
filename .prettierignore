@@ -21,7 +21,7 @@ typechain-types
 # Git submodules
 validator/lib/
 
-# Foundry/Hardhat outputs
+# Foundry outputs
 validator/broadcast/
 validator/cache/
 validator/out/

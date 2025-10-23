@@ -3,6 +3,7 @@ import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
 import { DatabaseService } from "../database/database.service";
 import { CryptoUtil } from "../common/utils/crypto.util";
+import { KmsService } from "../kms/kms.service";
 import { ethers } from "ethers";
 import * as bcrypt from "bcrypt";
 import { RegisterDto } from "./dto/register.dto";
@@ -29,7 +30,8 @@ export class AuthService {
   constructor(
     private databaseService: DatabaseService,
     private jwtService: JwtService,
-    private configService: ConfigService
+    private configService: ConfigService,
+    private kmsService: KmsService
   ) {
     // Load WebAuthn configuration from environment variables
     this.rpName = this.configService.get<string>("webauthnRpName");
@@ -46,23 +48,63 @@ export class AuthService {
 
     const hashedPassword = await bcrypt.hash(registerDto.password, 10);
 
-    // Generate HDWallet for the user
-    const userWallet = ethers.Wallet.createRandom();
-    const encryptionKey = this.configService.get<string>("userEncryptionKey");
-    const encryptedPrivateKey = CryptoUtil.encrypt(userWallet.privateKey, encryptionKey);
+    let walletAddress: string;
+    let encryptedPrivateKey: string | undefined;
+    let mnemonic: string | undefined;
+    let kmsKeyId: string | undefined;
+    let useKms = false;
 
-    console.log("User Registration Debug:");
-    console.log("- Generated Wallet Address:", userWallet.address);
-    console.log("- Mnemonic:", userWallet.mnemonic?.phrase);
+    if (this.kmsService.isKmsEnabled()) {
+      // Use KMS to create wallet
+      useKms = true;
+      const description = `wallet-${registerDto.email}-${Date.now()}`;
+
+      console.log("════════════════════════════════════════════");
+      console.log("🚀 Starting KMS Wallet Creation");
+      console.log("════════════════════════════════════════════");
+      console.log(`👤 User Email: ${registerDto.email}`);
+      console.log(`📝 Description: ${description}`);
+      console.log("════════════════════════════════════════════");
+
+      const kmsResponse = await this.kmsService.createKey(description);
+
+      kmsKeyId = kmsResponse.KeyMetadata.KeyId;
+      // Use the address from KMS CreateKey response
+      walletAddress = kmsResponse.KeyMetadata.Address || kmsResponse.Address;
+
+      if (!walletAddress) {
+        throw new Error("KMS CreateKey response did not include an address");
+      }
+
+      console.log("════════════════════════════════════════════");
+      console.log("✅ KMS Wallet Created Successfully");
+      console.log("════════════════════════════════════════════");
+      console.log(`🔑 KMS Key ID: ${kmsKeyId}`);
+      console.log(`💰 Wallet Address: ${walletAddress}`);
+      console.log("════════════════════════════════════════════");
+    } else {
+      // Generate HDWallet locally (existing logic)
+      const userWallet = ethers.Wallet.createRandom();
+      const encryptionKey = this.configService.get<string>("userEncryptionKey");
+      encryptedPrivateKey = CryptoUtil.encrypt(userWallet.privateKey, encryptionKey);
+      walletAddress = userWallet.address;
+      mnemonic = userWallet.mnemonic?.phrase;
+
+      console.log("User Registration Debug (Local):");
+      console.log("- Generated Wallet Address:", walletAddress);
+      console.log("- Mnemonic:", mnemonic);
+    }
 
     const user = {
       id: uuidv4(),
       email: registerDto.email,
       username: registerDto.username || registerDto.email.split("@")[0],
       password: hashedPassword,
-      walletAddress: userWallet.address,
+      walletAddress,
       encryptedPrivateKey,
-      mnemonic: userWallet.mnemonic?.phrase, // In production, this should also be encrypted
+      mnemonic, // In production, this should also be encrypted
+      kmsKeyId,
+      useKms,
       createdAt: new Date().toISOString(),
     };
 
@@ -111,10 +153,28 @@ export class AuthService {
     return result;
   }
 
-  async getUserWallet(userId: string): Promise<ethers.Wallet> {
+  async getUserWallet(userId: string): Promise<ethers.Wallet | any> {
     const user = await this.databaseService.findUserById(userId);
     if (!user) {
       throw new Error(`User not found for userId: ${userId}`);
+    }
+
+    if (user.useKms && user.kmsKeyId) {
+      // Return KMS signer with stored address
+      console.log("════════════════════════════════════════════");
+      console.log("🔐 Creating KMS Signer");
+      console.log("════════════════════════════════════════════");
+      console.log(`👤 User ID: ${userId}`);
+      console.log(`🔑 KMS Key ID: ${user.kmsKeyId}`);
+      console.log(`💰 Wallet Address: ${user.walletAddress}`);
+      console.log("════════════════════════════════════════════");
+
+      const kmsSigner = this.kmsService.createKmsSigner(user.kmsKeyId, user.walletAddress);
+
+      console.log("✅ KMS Signer created successfully");
+      console.log("════════════════════════════════════════════");
+
+      return kmsSigner;
     }
 
     if (!user.encryptedPrivateKey) {
@@ -183,7 +243,7 @@ export class AuthService {
       })),
       authenticatorSelection: {
         residentKey: "required",
-        userVerification: "preferred",
+        userVerification: "required",
       },
     });
 
@@ -213,7 +273,7 @@ export class AuthService {
         expectedChallenge,
         expectedOrigin: this.expectedOrigin,
         expectedRPID: this.rpID,
-        requireUserVerification: false,
+        requireUserVerification: true,
       });
 
       if (!verification.verified) {
@@ -223,24 +283,52 @@ export class AuthService {
       // 创建用户（包含密码和钱包）
       const hashedPassword = await bcrypt.hash(registerDto.password, 10);
 
-      // Generate HDWallet for the user (same as regular registration)
-      const userWallet = ethers.Wallet.createRandom();
-      const encryptionKey = this.configService.get<string>("userEncryptionKey");
+      let walletAddress: string;
+      let encryptedPrivateKey: string | undefined;
+      let mnemonic: string | undefined;
+      let kmsKeyId: string | undefined;
+      let useKms = false;
 
-      const encryptedPrivateKey = CryptoUtil.encrypt(userWallet.privateKey, encryptionKey);
+      if (this.kmsService.isKmsEnabled()) {
+        // Use KMS to create wallet
+        useKms = true;
+        const description = `wallet-${registerDto.email}-${Date.now()}`;
+        const kmsResponse = await this.kmsService.createKey(description);
 
-      console.log("Passkey User Registration Debug:");
-      console.log("- Generated Wallet Address:", userWallet.address);
-      console.log("- Mnemonic:", userWallet.mnemonic?.phrase);
+        kmsKeyId = kmsResponse.KeyMetadata.KeyId;
+        // Use the address from KMS CreateKey response
+        walletAddress = kmsResponse.KeyMetadata.Address || kmsResponse.Address;
+
+        if (!walletAddress) {
+          throw new Error("KMS CreateKey response did not include an address");
+        }
+
+        console.log("Passkey User Registration Debug (KMS):");
+        console.log("- KMS Key ID:", kmsKeyId);
+        console.log("- Wallet Address:", walletAddress);
+      } else {
+        // Generate HDWallet locally (existing logic)
+        const userWallet = ethers.Wallet.createRandom();
+        const encryptionKey = this.configService.get<string>("userEncryptionKey");
+        encryptedPrivateKey = CryptoUtil.encrypt(userWallet.privateKey, encryptionKey);
+        walletAddress = userWallet.address;
+        mnemonic = userWallet.mnemonic?.phrase;
+
+        console.log("Passkey User Registration Debug (Local):");
+        console.log("- Generated Wallet Address:", walletAddress);
+        console.log("- Mnemonic:", mnemonic);
+      }
 
       const user = {
         id: uuidv4(),
         email: registerDto.email,
         username: registerDto.username || registerDto.email.split("@")[0],
         password: hashedPassword,
-        walletAddress: userWallet.address,
+        walletAddress,
         encryptedPrivateKey,
-        mnemonic: userWallet.mnemonic?.phrase, // In production, this should also be encrypted
+        mnemonic, // In production, this should also be encrypted
+        kmsKeyId,
+        useKms,
         createdAt: new Date().toISOString(),
       };
 
@@ -279,7 +367,7 @@ export class AuthService {
   async beginPasskeyLogin() {
     const options = await generateAuthenticationOptions({
       rpID: this.rpID,
-      userVerification: "preferred",
+      userVerification: "required",
     });
 
     // 使用challenge作为key存储临时数据
@@ -326,7 +414,7 @@ export class AuthService {
           counter: passkey.counter,
           transports: passkey.transports,
         },
-        requireUserVerification: false,
+        requireUserVerification: true,
       });
 
       if (!verification.verified) {
@@ -387,7 +475,7 @@ export class AuthService {
       })),
       authenticatorSelection: {
         residentKey: "required",
-        userVerification: "preferred",
+        userVerification: "required",
       },
     });
 
@@ -424,7 +512,7 @@ export class AuthService {
         expectedChallenge,
         expectedOrigin: this.expectedOrigin,
         expectedRPID: this.rpID,
-        requireUserVerification: false,
+        requireUserVerification: true,
       });
 
       if (!verification.verified) {
@@ -449,12 +537,103 @@ export class AuthService {
       // 清除challenge
       this.challengeStore.delete(`device_${registerDto.email}`);
 
+      const { password: _password, ...result } = user;
       return {
         message: "Device passkey registered successfully",
+        user: result,
+        access_token: this.generateToken(user),
       };
     } catch {
       this.challengeStore.delete(`device_${registerDto.email}`);
       throw new UnauthorizedException("Passkey registration failed");
+    }
+  }
+
+  // 交易Passkey验证流程 - 开始
+  async beginTransactionVerification(userId: string) {
+    const user = await this.databaseService.findUserById(userId);
+    if (!user) {
+      throw new UnauthorizedException("User not found");
+    }
+
+    const userPasskeys = await this.databaseService.findPasskeysByUserId(userId);
+    if (userPasskeys.length === 0) {
+      throw new UnauthorizedException("No passkey registered for this account");
+    }
+
+    const options = await generateAuthenticationOptions({
+      rpID: this.rpID,
+      userVerification: "required",
+      allowCredentials: userPasskeys.map(passkey => ({
+        id: passkey.credentialId,
+        transports: passkey.transports || [],
+      })),
+    });
+
+    // 使用challenge作为key存储临时数据
+    this.challengeStore.set(`tx_${userId}_${options.challenge}`, options.challenge);
+
+    return options;
+  }
+
+  // 交易Passkey验证流程 - 完成
+  async completeTransactionVerification(userId: string, credential: any) {
+    const credentialId = credential.id || credential.rawId;
+    const passkey = await this.databaseService.findPasskeyByCredentialId(credentialId);
+
+    if (!passkey) {
+      throw new UnauthorizedException("Passkey not found");
+    }
+
+    if (passkey.userId !== userId) {
+      throw new UnauthorizedException("Passkey does not belong to this user");
+    }
+
+    const expectedChallenge = this.challengeStore.get(
+      `tx_${userId}_${
+        credential.response.clientDataJSON
+          ? JSON.parse(atob(credential.response.clientDataJSON)).challenge
+          : ""
+      }`
+    );
+
+    if (!expectedChallenge) {
+      throw new UnauthorizedException("Invalid verification session");
+    }
+
+    try {
+      const verification = await verifyAuthenticationResponse({
+        response: credential,
+        expectedChallenge,
+        expectedOrigin: this.expectedOrigin,
+        expectedRPID: this.rpID,
+        credential: {
+          id: passkey.credentialId,
+          publicKey: new Uint8Array(passkey.publicKey),
+          counter: passkey.counter,
+          transports: passkey.transports,
+        },
+        requireUserVerification: true,
+      });
+
+      if (!verification.verified) {
+        throw new UnauthorizedException("Passkey verification failed");
+      }
+
+      // 更新counter
+      await this.databaseService.updatePasskey(passkey.credentialId, {
+        counter: verification.authenticationInfo.newCounter,
+      });
+
+      // 清除challenge
+      this.challengeStore.delete(`tx_${userId}_${expectedChallenge}`);
+
+      return {
+        verified: true,
+        message: "Transaction verification successful",
+      };
+    } catch {
+      throw new UnauthorizedException("Passkey verification failed");
     }
   }
 }

@@ -3,57 +3,66 @@ import { ConfigService } from "@nestjs/config";
 import { ethers } from "ethers";
 import { DatabaseService } from "../database/database.service";
 import { EthereumService } from "../ethereum/ethereum.service";
-import { DeploymentWalletService } from "../ethereum/deployment-wallet.service";
 import { AuthService } from "../auth/auth.service";
-import { CreateAccountDto } from "./dto/create-account.dto";
+import { CreateAccountDto, EntryPointVersionDto } from "./dto/create-account.dto";
+import { EntryPointVersion } from "../common/constants/entrypoint.constants";
 
 @Injectable()
 export class AccountService {
   constructor(
     private databaseService: DatabaseService,
     private ethereumService: EthereumService,
-    private deploymentWalletService: DeploymentWalletService,
     private authService: AuthService,
     private configService: ConfigService
   ) {}
 
   async createAccount(userId: string, createAccountDto: CreateAccountDto) {
-    // Check if user already has an account
-    const existingAccount = await this.databaseService.findAccountByUserId(userId);
+    // Check if user already has an account with the specified version
+    const existingAccounts = await this.databaseService.getAccounts();
+    const userAccounts = existingAccounts.filter(a => a.userId === userId);
+
+    // Determine the version to use
+    const versionDto = createAccountDto.entryPointVersion || EntryPointVersionDto.V0_6;
+    const version = versionDto as unknown as EntryPointVersion;
+
+    // Check if user already has an account with this version
+    const existingAccount = userAccounts.find(a => a.entryPointVersion === versionDto);
     if (existingAccount) {
       return existingAccount;
     }
 
-    const factory = this.ethereumService.getFactoryContract();
-    const validatorAddress = this.configService.get<string>("VALIDATOR_CONTRACT_ADDRESS");
+    const factory = this.ethereumService.getFactoryContract(version);
+    const validatorAddress =
+      this.ethereumService.getValidatorContract(version).target ||
+      this.ethereumService.getValidatorContract(version).address;
 
-    // Use deployment wallet as the owner (from .secret file)
-    const deploymentWallet = this.deploymentWalletService.getWallet();
-    // Get user's wallet address for AA signature verification
+    // Get user's wallet address - now used as both creator and signer
     const userWallet = await this.authService.getUserWallet(userId);
     const salt = createAccountDto.salt || Math.floor(Math.random() * 1000000);
 
-    // Get the predicted account address using deployment wallet as creator and user wallet for AA signature
+    // Get the predicted account address using user wallet as both creator and signer
+    // This unifies the architecture - user has full control of their account
     const accountAddress = await factory["getAddress(address,address,address,bool,uint256)"](
-      deploymentWallet.address,
-      userWallet.address, // signerAddress for AA signature verification
+      userWallet.address, // creator - now same as signer for unified control
+      userWallet.address, // signer - for AA signature verification
       validatorAddress,
       true, // useAAStarValidator
       salt
     );
 
     // Debug logging
-    console.log("Account Creation Debug:");
-    console.log("- Deployment Wallet Address (Creator):", deploymentWallet.address);
-    console.log("- User Wallet Address (Signer):", userWallet.address);
+    console.log("Account Creation Debug (Unified Creator/Signer):");
+    console.log("- EntryPoint Version:", versionDto);
+    console.log("- User Wallet Address (Creator & Signer):", userWallet.address);
     console.log("- Validator Address:", validatorAddress);
     console.log("- Salt:", salt);
     console.log("- Predicted AA Account Address:", accountAddress);
     console.log("- Factory Contract Address:", factory.target || factory.address);
+    console.log("- Note: Using unified architecture - Creator = Signer");
 
     // Check if account is already deployed on-chain (this may be slow for RPC calls)
     let deployed = false;
-    let deploymentTxHash = null;
+    const deploymentTxHash = null;
 
     try {
       const provider = this.ethereumService.getProvider();
@@ -66,24 +75,25 @@ export class AccountService {
     }
 
     // Don't auto-deploy on account creation
-    // Deployment will happen on first transaction
+    // Deployment will happen on first transaction via Paymaster
     if (deployed) {
       console.log("Account already deployed on-chain:", accountAddress);
     } else {
       console.log("Account will be deployed on first transaction:", accountAddress);
-      console.log("Using deployment wallet for gas:", deploymentWallet.address);
+      console.log("Deployment will be sponsored by Paymaster (no ETH needed in user wallet)");
     }
 
-    // Save account information
+    // Save account information (unified architecture - no separate creatorAddress)
     const account = {
       userId,
       address: accountAddress,
-      creatorAddress: deploymentWallet.address, // Use deployment wallet as creator
-      signerAddress: userWallet.address, // User wallet for AA signature verification
+      signerAddress: userWallet.address, // Acts as both signer and creator
       salt,
       deployed,
       deploymentTxHash,
       validatorAddress,
+      entryPointVersion: versionDto,
+      factoryAddress: factory.target || factory.address,
       createdAt: new Date().toISOString(),
     };
 
@@ -116,8 +126,11 @@ export class AccountService {
       // Use default value if RPC fails
     }
 
+    // Get the version for this account
+    const version = (account.entryPointVersion || "0.6") as unknown as EntryPointVersion;
+
     // Get nonce
-    const nonce = await this.ethereumService.getNonce(account.address);
+    const nonce = await this.ethereumService.getNonce(account.address, 0, version);
 
     const finalResult = {
       ...account,
@@ -163,72 +176,13 @@ export class AccountService {
     };
   }
 
-  async fundAccount(userId: string, amount: string) {
-    const account = await this.databaseService.findAccountByUserId(userId);
-    if (!account) {
-      throw new NotFoundException("Account not found");
-    }
-
-    // Use deployment wallet for funding
-    const provider = this.ethereumService.getProvider();
-    const deploymentWallet = this.deploymentWalletService.getWallet(provider);
-
-    const tx = await deploymentWallet.sendTransaction({
-      to: account.address,
-      value: ethers.parseEther(amount),
-      maxFeePerGas: ethers.parseUnits("30", "gwei"),
-      maxPriorityFeePerGas: ethers.parseUnits("10", "gwei"),
-    });
-
-    await tx.wait();
-
-    return {
-      success: true,
-      txHash: tx.hash,
-      amount,
-      address: account.address,
-    };
-  }
+  // fundAccount method removed - not needed with Paymaster
+  // Users don't need ETH when all transactions are sponsored by Paymaster
 
   async getAccountByUserId(userId: string) {
     return await this.databaseService.findAccountByUserId(userId);
   }
 
-  async sponsorAccount(userId: string) {
-    const account = await this.databaseService.findAccountByUserId(userId);
-    if (!account) {
-      throw new NotFoundException("Account not found");
-    }
-
-    if (account.sponsored) {
-      throw new BadRequestException("Account has already been sponsored");
-    }
-
-    // Use deployment wallet to sponsor with 0.01 ETH
-    const provider = this.ethereumService.getProvider();
-    const deploymentWallet = this.deploymentWalletService.getWallet(provider);
-    const sponsorAmount = "0.01";
-
-    const tx = await deploymentWallet.sendTransaction({
-      to: account.address,
-      value: ethers.parseEther(sponsorAmount),
-      maxFeePerGas: ethers.parseUnits("30", "gwei"),
-      maxPriorityFeePerGas: ethers.parseUnits("10", "gwei"),
-    });
-
-    await tx.wait();
-
-    // Update account to mark as sponsored
-    await this.databaseService.updateAccount(userId, {
-      sponsored: true,
-      sponsorTxHash: tx.hash,
-    });
-
-    return {
-      success: true,
-      txHash: tx.hash,
-      amount: sponsorAmount,
-      address: account.address,
-    };
-  }
+  // sponsorAccount method removed - not needed with Paymaster
+  // All transactions are sponsored by Paymaster, no need for ETH sponsorship
 }

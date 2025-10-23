@@ -15,11 +15,7 @@ out/
 build/
 
 # Node state files (contains private keys)
-signer/node_*.json
 node_*.json
-
-# Configuration files with private keys
-signer/demo/config.json
 
 # Development node files also contain private keys - do not allow
 # !signer/node_dev_*.json  # REMOVED: these files contain private keys

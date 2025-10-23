@@ -1,80 +1,36 @@
-# Multi-stage build for combined aastar application
-FROM node:20.19.0 AS base
+# YetAnotherAA Docker All-in-One
+FROM node:20.19.0-alpine
 
-# Backend dependencies
-FROM base AS backend-deps
-WORKDIR /app/backend
-COPY aastar/package*.json ./
-RUN npm install --omit=dev
-
-# Backend build
-FROM base AS backend-build
-WORKDIR /app/backend
-COPY aastar/package*.json ./
-RUN npm install
-COPY aastar/ ./
-RUN npm run build
-
-# Frontend dependencies
-FROM base AS frontend-deps
-WORKDIR /app/frontend
-COPY aastar-frontend/package*.json ./
-# Need all dependencies for Next.js build
-RUN npm install
-
-# Frontend build
-FROM base AS frontend-build
-WORKDIR /app/frontend
-COPY aastar-frontend/package*.json ./
-RUN npm install
-COPY aastar-frontend/ ./
-ENV NEXT_PUBLIC_API_URL=/api/v1
-ENV SKIP_ENV_VALIDATION=true
-RUN npm run build
-
-# Production image with both services
-FROM base AS production
 WORKDIR /app
 
-# Install PM2 for process management
-RUN npm install -g pm2
+# Install PM2 globally
+RUN npm install -g pm2 && apk add --no-cache git
 
-# Create non-root user with home directory
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 --home /home/nodejs --shell /bin/bash nodejs
+# Copy package files
+COPY package*.json ./
+COPY aastar/package*.json ./aastar/
+COPY aastar-frontend/package*.json ./aastar-frontend/
 
-# Copy backend
-COPY --from=backend-deps /app/backend/node_modules ./backend/node_modules
-COPY --from=backend-build /app/backend/dist ./backend/dist
-COPY --from=backend-build /app/backend/package*.json ./backend/
+# Install dependencies with force flag to bypass platform-specific issues
+RUN npm ci --include=dev --force
 
-# Copy frontend (only production dependencies)
-# Install production-only dependencies in a new stage
-FROM base AS frontend-prod-deps
-WORKDIR /app/frontend
-COPY aastar-frontend/package*.json ./
-RUN npm install --omit=dev
+# Copy source code
+COPY . .
 
-# Copy frontend
-COPY --from=frontend-prod-deps /app/frontend/node_modules ./frontend/node_modules
-COPY --from=frontend-build /app/frontend/.next ./frontend/.next
-COPY --from=frontend-build /app/frontend/public ./frontend/public
-COPY --from=frontend-build /app/frontend/package*.json ./frontend/
-COPY --from=frontend-build /app/frontend/next.config.ts ./frontend/
+# Build all applications
+ENV NEXT_PUBLIC_API_URL=/api/v1
+ENV BACKEND_API_URL=http://localhost:3000
+RUN npm run build -w aastar && \
+    npm run build -w aastar-frontend
 
-# Copy PM2 ecosystem file
-COPY ecosystem.config.js ./
+# The configuration files are already copied with 'COPY . .' above
 
-# Copy data directory with configurations
-COPY aastar/data ./backend/data/
-
-# Change ownership
-RUN chown -R nodejs:nodejs /app
-RUN mkdir -p /home/nodejs/.pm2 && chown -R nodejs:nodejs /home/nodejs
-
-USER nodejs
-ENV PM2_HOME=/home/nodejs/.pm2
-
+# Expose port for frontend
 EXPOSE 80
 
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost/ || exit 1
+
+# Start all services with PM2
 CMD ["pm2-runtime", "start", "ecosystem.config.js"]
